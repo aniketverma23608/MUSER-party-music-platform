@@ -1,0 +1,51 @@
+# Stage 1: Install dependencies
+FROM node:20-alpine AS installer
+
+WORKDIR /usr/src/app
+RUN corepack enable npm
+
+# Install OpenSSL and libc6-compat for Prisma engine compatibility on Alpine
+RUN apk add --no-cache openssl libc6-compat
+
+# Set LD_PRELOAD for glibc compatibility (crucial for Prisma on Alpine)
+ENV LD_PRELOAD=/lib/libc.so.6
+
+# Copy both package.json and package-lock.json for reproducible installs
+COPY ws/package.json ws/package-lock.json ./
+# copy this file to habdle the @muzer/auth-utils error
+COPY muzer/lib ./muzer/lib
+# Clean and consistent install of dependencies according to package-lock.json
+RUN npm ci --ignore-scripts
+
+COPY ws/src ./src
+COPY ws/tsconfig.json ./
+# commneted fro cicd
+# COPY ws/.env ./ 
+ # Only if you need .env in container
+COPY ws/prisma ./prisma
+
+ARG DATABASE_URL
+ENV DATABASE_URL=$DATABASE_URL
+
+RUN echo "DATABASE_URL from ARG: $DATABASE_URL"
+RUN npx prisma generate
+
+# Stage 2: Development server
+FROM node:20-alpine AS dev
+
+WORKDIR /usr/src/app
+RUN corepack enable npm
+
+# Install OpenSSL and libc6-compat in the runtime (dev) stage as well
+RUN apk add --no-cache openssl libc6-compat
+
+# Set LD_PRELOAD for glibc compatibility in the runtime (dev) stage
+ENV LD_PRELOAD=/lib/libc.so.6
+
+# Copy everything from the installer stage, including node_modules and generated Prisma client
+COPY --from=installer /usr/src/app/ ./
+
+# Expose the port your WebSocket service runs on
+EXPOSE 8080
+
+CMD ["npm", "run", "dev:docker"]

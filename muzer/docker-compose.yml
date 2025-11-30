@@ -1,0 +1,67 @@
+services:
+  app:
+    container_name: muzer-docker
+    build:
+      context: ./
+      dockerfile: Dockerfile.dev
+      args: # <--- CRUCIAL: Pass DATABASE_URL during build
+        DATABASE_URL: "postgresql://neondb_owner:npg_tNuOd95XvwCL@ep-dark-meadow-ade3y3rz-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+    env_file:
+      - .env # Loads other environment variables like APP_PORT
+    ports:
+      - "${APP_PORT}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The 'develop' section is for live code reloading in development, keep this as is
+    develop:
+      watch:
+        - action: sync
+          path: ./
+          target: /usr/src/app
+          ignore:
+            - node_modules/
+        - action: rebuild
+          path: package.json
+          target: /usr/src/app
+          ignore:
+            - node_modules/
+    environment:
+      DATABASE_URL: "postgresql://neondb_owner:npg_tNuOd95XvwCL@ep-dark-meadow-ade3y3rz-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+    dns:
+      - 8.8.8.8 # Google Public DNS
+      - 8.8.4.4 # Google Public DNS
+
+  postgres:
+    container_name: prisma-postgres
+    image: postgres:alpine
+    restart: always
+    env_file:
+      - .env # This should contain POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB for the postgres container
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - ${POSTGRES_PATH}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prisma-studio:
+    container_name: prisma-studio
+    image: timothyjmiller/prisma-studio:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - postgres # Changed from 'app' to 'postgres' as Prisma Studio should connect directly to postgres
+    ports:
+      - "${PRISMA_STUDIO_PORT}:5555"
+    environment: # Prisma Studio needs the DATABASE_URL as an environment variable
+      DATABASE_URL: "postgresql://neondb_owner:npg_tNuOd95XvwCL@ep-dark-meadow-ade3y3rz-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+
+
+volumes:
+  postgres-data:
+    external: false

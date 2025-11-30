@@ -1,0 +1,66 @@
+# Stage 1: Install dependencies
+FROM node:20-alpine AS installer
+
+WORKDIR /usr/src/app
+
+RUN apk add --no-cache openssl-dev openssl
+RUN apk add --no-cache libc6-compat
+
+# Copy lockfile and package.json for reproducible installs
+COPY package.json package-lock.json ./
+
+# Copy prisma schema separately if needed for generating client in next stages
+COPY prisma ./prisma
+
+# Install dependencies based on package-lock.json (clean and reproducible)
+RUN corepack enable npm && npm ci --ignore-scripts
+
+# Stage 2: Build stage
+FROM node:20-alpine AS builder
+
+WORKDIR /usr/src/app
+
+# Declare DATABASE_URL as a build argument for this stage
+ARG DATABASE_URL 
+
+# Copy installed node_modules and prisma folder from installer stage
+COPY --from=installer /usr/src/app/node_modules ./node_modules
+COPY --from=installer /usr/src/app/prisma ./prisma
+# ENV PRISMA_QUERY_ENGINE_BINARY=/app/node_modules/.prisma/client/libquery_engine-linux-musl.so.node
+# Generate Prisma client with DATABASE_URL provided at build time
+RUN DATABASE_URL=$DATABASE_URL npx prisma generate --binary-target=linux-musl
+
+
+# Copy rest of the source files
+COPY . .
+
+# Run build script
+RUN corepack enable npm && npm run build
+
+# Stage 3: Run stage
+FROM node:20-alpine AS runner
+
+WORKDIR /usr/src/app
+
+ENV NODE_ENV=production
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Copy static assets and build output from builder stage
+COPY --from=builder /usr/src/app/public ./public
+
+RUN mkdir .next
+RUN chown nextjs:nodejs .next
+
+COPY --from=builder --chown=nextjs:nodejs /usr/src/app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /usr/src/app/.next/static ./.next/static
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+CMD ["node", "server.js"]
